@@ -1,0 +1,45 @@
+{
+  "repository": "https://github.com/zalando/postgres-operator",
+  "tag": "v2.0.3",
+  "release_url": "https://github.com/zalando/postgres-operator/releases/tag/v2.0.3",
+  "published_at": "2026-10-02T08:58:47Z",
+  "commit": "80b7a074ada5221dc5eeac487c19faf810eb9cfe",
+  "files": [
+    {
+      "manifest": "vendor/postgresql.crd.yaml",
+      "immutable_source": "https://raw.githubusercontent.com/zalando/postgres-operator/80b7a074ada5221dc5eeac487c19faf810eb9cfe/manifests/postgresql.crd.yaml",
+      "sha256": "dbe5b8b548bd9570fdcd094ba7636d306a6d41e1dbd0954bedcba788d396473d",
+      "size_bytes": 189200
+    },
+    {
+      "manifest": "vendor/operatorconfiguration.crd.yaml",
+      "immutable_source": "https://raw.githubusercontent.com/zalando/postgres-operator/80b7a074ada5221dc5eeac487c19faf810eb9cfe/manifests/operatorconfiguration.crd.yaml",
+      "sha256": "54f2d79527f0712bea0c769036f199121c9db44308eda11954a652229081c7a5",
+      "size_bytes": 132473
+    },
+    {
+      "manifest": "vendor/postgresql-operator-default-configuration.yaml",
+      "immutable_source": "https://raw.githubusercontent.com/zalando/postgres-operator/80b7a074ada5221dc5eeac487c19faf810eb9cfe/manifests/postgresql-operator-default-configuration.yaml",
+      "sha256": "c373972d0c0aad9c55d76786b86013f0578731a4d691d8f4723d36dca904125c",
+      "size_bytes": 7957
+    },
+    {
+      "manifest": "vendor/operator-service-account-rbac.yaml",
+      "immutable_source": "https://raw.githubusercontent.com/zalando/postgres-operator/80b7a074ada5221dc5eeac487c19faf810eb9cfe/manifests/operator-service-account-rbac.yaml",
+      "sha256": "e2afc6cb25d38bcd3720ba7469d0f917deaec2189eedb85275e1b2024dfa650c",
+      "size_bytes": 5135
+    },
+    {
+      "manifest": "vendor/postgres-operator.yaml",
+      "immutable_source": "https://raw.githubusercontent.com/zalando/postgres-operator/80b7a074ada5221dc5eeac487c19faf810eb9cfe/manifests/postgres-operator.yaml",
+      "sha256": "b54d63e178d7d2c15a6bf1c2057f0a6fe79f8a59f54f103b6f80e2a12482cf1f",
+      "size_bytes": 1350
+    },
+    {
+      "manifest": "vendor/api-service.yaml",
+      "immutable_source": "https://raw.githubusercontent.com/zalando/postgres-operator/80b7a074ada5221dc5eeac487c19faf810eb9cfe/manifests/api-service.yaml",
+      "sha256": "1952b75ab0f18994eaca061161ee612e52cef8fde88d06558ea54b55d5b7fac1",
+      "size_bytes": 192
+    }
+  ]
+}

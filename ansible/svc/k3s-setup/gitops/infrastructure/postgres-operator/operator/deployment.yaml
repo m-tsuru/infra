@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-operator
+  annotations:
+    argocd.argoproj.io/sync-wave: '0'
+spec:
+  template:
+    metadata:
+      annotations:
+        # Increment with configuration changes: the Operator reads its CR at startup.
+        sasakulab.com/operator-configuration-revision: '1'
+    spec:
+      containers:
+        - name: postgres-operator
+          env:
+            - name: CONFIG_MAP_NAME
+              $patch: delete
+            - name: POSTGRES_OPERATOR_CONFIGURATION_OBJECT
+              value: postgresql-operator-default-configuration
+          # Verified in the pinned API server; checks HTTP availability, not DB health.
+          readinessProbe:
+            httpGet:
+              path: /readyz/
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3

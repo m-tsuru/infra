@@ -1,0 +1,33 @@
+# Inactive example: not referenced by any Kustomization.
+# local-path is node-local test storage. Decide storage and off-node backups first.
+apiVersion: acid.zalan.do/v1
+kind: postgresql
+metadata:
+  name: sasakulab-postgres
+  namespace: databases
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  teamId: sasakulab
+  numberOfInstances: 2
+  postgresql:
+    version: '18'
+  volume:
+    size: 5Gi
+    storageClass: local-path
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: '1'
+      memory: 1Gi
+  users:
+    app_owner: []
+  databases:
+    app: app_owner
+  enableMasterLoadBalancer: false
+  enableReplicaLoadBalancer: false
+  enableConnectionPooler: false
+  enableReplicaConnectionPooler: false
+  enableLogicalBackup: false

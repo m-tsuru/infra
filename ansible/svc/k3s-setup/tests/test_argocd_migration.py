@@ -252,7 +252,9 @@ class MigrationLayoutTests(unittest.TestCase):
         source = ROOT / root["spec"]["source"]["path"]
         self.assertEqual(source, GITOPS / "argocd/applications")
         resources = load_yaml(source / "kustomization.yaml")["resources"]
-        self.assertEqual(set(resources), {"argocd.yaml", "sealed-secrets.yaml", "apps.yaml"})
+        self.assertEqual(set(resources), {
+            "argocd.yaml", "sealed-secrets.yaml", "postgres-operator.yaml", "apps.yaml",
+        })
         self.assertNotIn("root.yaml", resources)
         children = [load_yaml(source / name) for name in resources]
         self.assertNotIn(root["metadata"]["name"], [app["metadata"]["name"] for app in children])

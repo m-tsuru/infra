@@ -5,4 +5,5 @@ resources:
   # Bootstrap root is applied separately: ignore-healthcheck does not bypass sync-wave waits.
   - argocd.yaml
   - sealed-secrets.yaml
+  - postgres-operator.yaml
   - apps.yaml

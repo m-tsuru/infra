@@ -1,0 +1,32 @@
+apiVersion: acid.zalan.do/v1
+kind: OperatorConfiguration
+metadata:
+  name: postgresql-operator-default-configuration
+  annotations:
+    argocd.argoproj.io/sync-wave: '-5'
+configuration:
+  enable_crd_registration: false
+  kubernetes:
+    watched_namespace: databases
+    enable_finalizers: false
+    enable_owner_references: false
+    enable_persistent_volume_claim_deletion: false
+    enable_secrets_deletion: false
+    persistent_volume_claim_retention_policy:
+      when_deleted: retain
+      when_scaled: retain
+    delete_annotation_date_key: delete-date
+    delete_annotation_name_key: delete-clustername
+    enable_pod_antiaffinity: true
+    pod_antiaffinity_topology_key: kubernetes.io/hostname
+    pod_antiaffinity_preferred_during_scheduling: false
+  teams_api:
+    enable_teams_api: false
+    enable_team_superuser: false
+    # The OperatorConfiguration CRD defaults this to true, independently of Teams API.
+    enable_postgres_team_crd: false
+    enable_postgres_team_crd_superusers: false
+  logical_backup:
+    logical_backup_s3_bucket: ''
+  debug:
+    debug_logging: false
