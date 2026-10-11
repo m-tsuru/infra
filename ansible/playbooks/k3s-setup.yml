@@ -50,8 +50,8 @@
           no_log: true
           diff: false
 
-    - name: Bootstrap Flux and then leave reconciliation to Git
+    - name: Bootstrap Argo CD and then leave reconciliation to Git
       ansible.builtin.import_role:
-        name: gitops_bootstrap
+        name: argocd_bootstrap
       tags:
         - gitops

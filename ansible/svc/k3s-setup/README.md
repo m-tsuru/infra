@@ -1,8 +1,14 @@
 # k3s-setup
 
-Ansible で 3 台の k3s server を構築し、Flux に Kubernetes リソースの継続管理を引き渡します。
+Ansible で 3 台の k3s server を構築し、Argo CD に Kubernetes リソースの継続管理を引き渡します。
 外部 Ansible Galaxy role は使用せず、このサービス内の `roles/k3s` と
-`roles/gitops_bootstrap` を使用します。実機へのインストールはまだ実行していません。
+`roles/argocd_bootstrap` を使用します。
+
+**既に Flux でセットアップ済みの場合は再構築しないでください。**
+[Flux → Argo CD の移行手順](gitops/MIGRATE-TO-ARGOCD.md) に従い、
+`ansible/playbooks/k3s-argocd.yml` で GitOps 部分だけを切り替えます。
+旧 Flux の manifest / role は、稼働中リソースの誤削除防止と切り戻しのため残しています。
+アシスタントは実機の移行・再インストールを実行していません。
 
 ## 構成と管理境界
 
@@ -16,41 +22,45 @@ Ansible で 3 台の k3s server を構築し、Flux に Kubernetes リソース�
 初回は sakuta → kaede → nodoka の順で参加させ、以降も `serial: 1` で変更します。
 etcd の quorum は 2 台です。同時に 2 台を停止しないでください。
 
-- **Ansible**: ホスト名、`/etc/hosts`、swap、カーネル設定、k3s バイナリ・設定・systemd、Flux 初回導入。
-- **Flux**: Flux 自身、Sealed Secrets、`gitops/apps` に追加したリソースの継続的な同期・削除。
+- **Ansible**: ホスト名、`/etc/hosts`、swap、カーネル設定、k3s バイナリ・設定・systemd、Argo CD 初回導入と root Application の初期設定。
+- **Argo CD**: Argo CD 自身、Sealed Secrets、`gitops/apps` と子 Application の継続的な同期。
+  移行時の誤削除防止のため自動 prune は無効です。削除の自動化は運用確認後に対象ごとに有効化します。
 - **k3s 標準コンポーネント**: CoreDNS、metrics-server、local-path provisioner は k3s が管理します。
-  これらのバージョンは Git 上の k3s バージョンに連動し、Flux と二重管理しません。
+  これらのバージョンは Git 上の k3s バージョンに連動し、Argo CD と二重管理しません。
 - **無効化**: k3s 同梱の Traefik と ServiceLB。Ingress / LoadBalancer は必要になった時点で GitOps に追加してください。
 - **非 Kubernetes の機密情報**: Ansible Vault。k3s の参加トークン、必要なら sudo パスワード。
 - **Kubernetes の機密情報**: kubeseal が生成する `SealedSecret` のみを Git に保存。
 
 「すべて」は宣言的な設定をこのリポジトリで管理する意味です。OS / k3s の適用は Ansible を実行し、
-Kubernetes の追加リソースは Flux が自動適用します。PV の実データ、etcd snapshot、復号鍵などの
+Kubernetes の追加リソースは Argo CD が自動適用します。PV の実データ、etcd snapshot、復号鍵などの
 バックアップは GitOps だけでは保護できません。
 
-固定バージョンは k3s **`v1.37.1+k3s1`**、Flux **`v2.9.6`**、Sealed Secrets **`v0.40.0`** です。
-k3s は公式 checksum ファイルで検証して取得します。Flux / Sealed Secrets の公式マニフェストは
-SHA256 検証済みのものを vendor 化しています。
+固定バージョンは k3s **`v1.37.1+k3s1`**、Argo CD **`v3.5.4`**、Sealed Secrets **`v0.40.0`** です。
+k3s は公式 checksum ファイルで検証して取得します。Argo CD / Sealed Secrets の公式マニフェストは
+SHA256 検証済みのものを vendor 化しています。旧 Flux **`v2.9.6`** は移行完了まで残します。
+Argo CD は通常の非 HA インストールです。k3s の etcd HA とは別に容量・可用性を確認してください。
 
 ## ファイル配置
 
 ```text
 ansible/
 ├── playbooks/
-│   └── k3s-setup.yml
+│   ├── k3s-setup.yml                    # 新規構築
+│   └── k3s-argocd.yml                   # 既存クラスタの GitOps 部分のみ
 └── svc/
     └── k3s-setup/
         ├── inventory/
         │   ├── hosts.yml
         │   └── group_vars/k3s_cluster/
         │       ├── main.yml
-        │       ├── vault.yml.example
         │       └── vault.yml              # 自分で作成する暗号化ファイル
         ├── roles/
         │   ├── k3s/
-        │   └── gitops_bootstrap/
+        │   ├── argocd_bootstrap/
+        │   └── gitops_bootstrap/           # 旧 Flux（移行用に保持）
         ├── gitops/
-        │   ├── clusters/local/flux-system/
+        │   ├── argocd/                    # Argo install / Applications
+        │   ├── clusters/local/flux-system/ # 旧 Flux（稼働中は削除しない）
         │   ├── infrastructure/sealed-secrets/
         │   └── apps/
         ├── tests/
@@ -64,10 +74,10 @@ ansible/
 
 - 各ホスト: **Debian / Ubuntu、systemd、amd64 / arm64**、Python 3、SSH、sudo 権限。
   対応外 OS / アーキテクチャでは変更前の検証で停止します。
-- server は最低 2 CPU / 2 GiB RAM。Flux とアプリケーション分の余裕が必要です。etcd 用に SSD を推奨します。
+- server は最低 2 CPU / 2 GiB RAM。Argo CD とアプリケーション分の余裕が必要です。etcd 用に SSD を推奨します。
 - 3 台の IP は固定。Pod CIDR `10.42.0.0/16`、Service CIDR `10.43.0.0/16` と LAN / VPN の範囲が重複しないこと。
 - GitHub、コンテナレジストリ、OS パッケージミラーへの外向き接続と、その名前を解決する既存 upstream resolver。
-- 操作端末: Ansible Core 2.19–2.21。構築後の操作には `kubectl`、`kubeseal` v0.40.0、任意で Flux CLI。
+- 操作端末: Ansible Core 2.19–2.21。構築後の操作には `kubectl`、`kubeseal` v0.40.0、任意で Argo CD CLI（旧 Flux 撤去時だけ Flux CLI）。
 - メモリ cgroup が有効で、`overlay` / `br_netfilter` がロード可能であること。
 - swap は無効化します。ロールは実行中の swap と `/etc/fstab` を処理しますが、zram / 独自 systemd unit の
   自動有効化は別途停止してください。再起動後も swap が戻らないことを確認してください。
@@ -107,7 +117,10 @@ Pod からの LAN 名解決は必要に応じて CoreDNS / 内部 DNS を別途�
 sakuta 停止中は、kubeconfig の `server` を別の稼働中 server の IP に切り替えてください。
 固定の HA endpoint が必要になったら、未割り当ての VIP / LB を決めて追加してください。
 
-## セットアップ
+## 新規クラスタのセットアップ
+
+以下はまだ構築していないクラスタ用です。既存クラスタの Vault / k3s / sealing key は作り直さず、
+[移行手順](gitops/MIGRATE-TO-ARGOCD.md) を使用してください。
 
 ### 1. Ansible と SSH の準備
 
@@ -137,7 +150,6 @@ vault_k3s_token: "生成したランダムトークン"
 # ansible_become_password: "sudo のパスワード"
 ```
 
-`vault.yml.example` は空の値を持つ説明用ファイルで、自動ロードされません。
 作成した `vault.yml` が `$ANSIBLE_VAULT;` で始まる暗号化ファイルであることを確認し、
 **暗号化済みの `vault.yml` は Git に保存**してください。Vault のパスワードは Git 管理外です。
 平文の `vault.yml` を作成・commit しないでください。
@@ -151,18 +163,18 @@ k3s の正式な手順で行い、etcd の復旧に必要な server token もバ
 
 ### 3. GitOps の参照先を確認し、先に push
 
-`gitops/clusters/local/flux-system/gotk-sync.yaml` の参照先は次のとおりです。
+`gitops/argocd/applications/*.yaml` の全 Application が次のリポジトリを参照します。
 
-- URL: `https://github.com/m-tsuru/infra`
+- URL: `https://github.com/m-tsuru/infra.git`
 - branch: `main`
-- path: `./ansible/svc/k3s-setup/gitops/clusters/local`
+- root path: `ansible/svc/k3s-setup/gitops/argocd/applications`
 
-別リポジトリを使用する場合はこのファイルを変更します。
+別リポジトリを使用する場合は root と全 child Application の source を揃えて変更します。
 **今回の bootstrap は公開リポジトリの HTTPS 読み取りを前提**とし、private repository の
 認証 bootstrap は実装していません。Git の書き込み用 token / deploy key も不要です。
 
 初回実行前に、この構成を参照先の branch に commit / push してください。
-Flux は操作端末の作業ツリーではなく GitHub 上の内容を読みます。
+Argo CD は操作端末の作業ツリーではなく GitHub 上の内容を読みます。
 
 ### 4. 検証して実行
 
@@ -182,18 +194,22 @@ kubeconfig は `ansible/svc/k3s-setup/artifacts/kubeconfig.yaml` に `0600`、�
 ```sh
 export KUBECONFIG=ansible/svc/k3s-setup/artifacts/kubeconfig.yaml
 kubectl get nodes -o wide
-kubectl -n flux-system get gitrepositories,kustomizations
+kubectl -n argocd get applications.argoproj.io \
+  -o custom-columns=NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status
 kubectl -n kube-system rollout status deployment/sealed-secrets-controller
 ```
 
 ## 運用
 
 - Kubernetes リソースは `gitops/apps` とその `kustomization.yaml` に追加して push します。
-- Secret の暗号化、GitOps の構成、バージョン更新は [gitops/OPERATIONS.md](gitops/OPERATIONS.md) を参照してください。
-- 全 Flux Kustomization は `prune: true`。Git から削除したリソースはクラスタからも削除されます。
-  Namespace / PVC の削除や local-path volume のデータ損失に注意してください。
-- 初回導入済みの Flux は通常の Ansible 再実行では再適用しません。初期化をやり直すための
-  `-e gitops_bootstrap_force=true` は復旧時のみ使用し、普段のアップグレードには使用しません。
+- UI 接続、Secret の暗号化、GitOps の構成、バージョン更新は [gitops/ARGOCD-OPERATIONS.md](gitops/ARGOCD-OPERATIONS.md) を参照してください。
+- 全 Application は自動 sync / self-heal が有効ですが、`prune: false`。Git から削除したリソースは自動削除されません。
+  移行・運用確認後に対象ごとに prune を有効化できます。Namespace / PVC のデータ損失には注意してください。
+- root 導入済みの Argo は通常の Ansible 再実行では再適用しません。root 自身は bootstrap オブジェクトとして
+  Git に宣言され、循環待機を避けるため子の同期対象から除外します。root spec の変更時だけ専用 Playbook に
+  `-e argocd_bootstrap_reapply_root=true` を付けます。既存 controller は再インストールしません。
+- 旧 Flux が残っている場合は、停止と削除保護を確認し `-e argocd_migrate_from_flux=true` が必要です。
+  自動停止・自動削除はしません。通常の Argo アップグレードは Git で行います。
 - k3s の再起動が必要な場合、既存の 3 台構成では他の server の `/readyz` を SSH 経由で確認してから
   1 台ずつ再起動します。他の server が不健全なら再起動前に停止します。初回の 1 台構成は例外です。
   2 台まで参加した途中の状態では、既存メンバーを再起動せず、未参加の 3 台目を `--limit` で先に追加してください。
@@ -202,7 +218,7 @@ kubectl -n kube-system rollout status deployment/sealed-secrets-controller
 - k3s の設定変更・バージョン更新は `roles/k3s/defaults/main.yml` または inventory の変数を変更し、
   `--tags k3s --ask-vault-pass` を付けて実行します。対応する Kubernetes の minor version を飛ばす更新は
   避け、アップグレード手順・snapshot・バックアップを事前確認してください。
-- kubeconfig だけ再取得する場合は `--tags kubeconfig`、Flux の bootstrap だけなら `--tags gitops` を使用します。
+- kubeconfig だけ再取得する場合は `--tags kubeconfig`、Argo CD の bootstrap だけなら `--tags gitops` を使用します。
   暗号化済み inventory がある場合は、どちらも `--ask-vault-pass` が必要です。
 
 etcd snapshot は 6 時間ごと、各 server に 10 世代保存します。これはノード外バックアップではありません。
@@ -217,6 +233,9 @@ local-path のデータはノードローカルなので、3 台の etcd HA と�
 ## ローカル検証の範囲
 
 `tests` は inventory、ロールの機密情報保護、k3s 設定テンプレート、CA-bound token の選択、
-途中失敗後の再適用、GitOps の依存関係・固定 manifest の checksum、平文 Secret / Vault の混入を検証します。
+途中失敗後の再適用、GitOps の依存関係・固定 manifest の checksum、機密値を含む平文 Secret / Vault の混入を検証します。
+Argo の公式 manifest にある空の `argocd-secret` / `argocd-notifications-secret` だけは許可し、
+実際の credential data の混入は拒否します。
+移行用の mock テストは opt-in、停止、削除保護、source 一致、root の再実行動作を検証します。
 Ansible をインストールした Python 環境で実行してください（PyYAML が必要です）。実機への SSH / Kubernetes API 操作は行いません。
-暗号化済み Vault の中身の妥当性、OS の実状態、CNI / etcd / Flux の稼働は構築後の確認が必要です。
+暗号化済み Vault の中身の妥当性、OS の実状態、CNI / etcd / Argo CD の稼働は構築後の確認が必要です。

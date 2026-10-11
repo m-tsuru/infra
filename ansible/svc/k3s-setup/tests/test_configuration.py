@@ -52,6 +52,8 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(plays[0]["order"], "inventory")
         self.assertTrue(plays[0]["any_errors_fatal"])
         self.assertEqual(plays[1]["hosts"], "k3s_bootstrap")
+        self.assertEqual(plays[1]["tasks"][-1]["ansible.builtin.import_role"]["name"],
+                         "argocd_bootstrap")
 
     def test_token_is_protected_and_download_is_verified(self):
         token_task = next(
@@ -96,6 +98,10 @@ class ConfigurationTests(unittest.TestCase):
             "infrastructure/sealed-secrets/controller.yaml":
                 "ac8aabccdd9110430d117501705818115b2ab0993700a9c118d4d42cf4015a17",
         }
+        argo_release = json.loads((GITOPS / "argocd/release.json").read_text())
+        assets["argocd/" + argo_release["manifest"]] = argo_release["sha256"]
+        self.assertEqual(argo_release["tag"], "v3.5.4")
+        self.assertEqual(argo_release["commit"], "d6d5b248ce00e1a2c512068002a93d3319767087")
         for relative, expected in assets.items():
             with self.subTest(asset=relative):
                 self.assertEqual(hashlib.sha256((GITOPS / relative).read_bytes()).hexdigest(),
@@ -128,7 +134,14 @@ class ConfigurationTests(unittest.TestCase):
     def test_no_plaintext_kubernetes_secrets_or_vault_files(self):
         for path in GITOPS.rglob("*.yaml"):
             for doc in load_documents(path):
-                self.assertNotEqual(doc.get("kind"), "Secret", str(path))
+                if doc.get("kind") == "Secret":
+                    # Only upstream empty placeholders are allowed. Credential
+                    # values must be generated/provided at runtime, not committed.
+                    self.assertEqual(path, GITOPS / "argocd/install/install.yaml")
+                    self.assertIn(doc["metadata"]["name"],
+                                  {"argocd-secret", "argocd-notifications-secret"})
+                    self.assertFalse(doc.get("data"))
+                    self.assertFalse(doc.get("stringData"))
         for path in (SERVICE / "inventory/group_vars").rglob("vault.yml"):
             self.assertTrue(path.read_text().startswith("$ANSIBLE_VAULT;"),
                             f"Plaintext Vault file: {path}")

@@ -1,0 +1,10 @@
+---
+# Existing clusters: bootstrap/migrate GitOps only; never run the k3s role here.
+- name: Bootstrap Argo CD on the existing k3s cluster
+  hosts: k3s_bootstrap
+  become: true
+  gather_facts: false
+  tags:
+    - gitops
+  roles:
+    - argocd_bootstrap

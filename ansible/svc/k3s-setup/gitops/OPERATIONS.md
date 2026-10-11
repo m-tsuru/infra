@@ -1,4 +1,9 @@
-# Local cluster GitOps
+# Legacy Flux operations
+
+> This document describes the previous Flux installation. New installations use
+> [Argo CD](ARGOCD-OPERATIONS.md). For an already-running Flux cluster, follow
+> [the migration procedure](MIGRATE-TO-ARGOCD.md) without rebuilding k3s.
+> Do not delete this legacy tree while Flux can reconcile it.
 
 Flux reconciles its own vendored controllers, its Git source and root sync, and
 all additional Kubernetes resources from this tree. k3s still owns its packaged

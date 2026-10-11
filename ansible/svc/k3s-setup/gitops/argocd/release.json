@@ -1,0 +1,17 @@
+{
+  "repository": "https://github.com/argoproj/argo-cd",
+  "tag": "v3.5.4",
+  "release_url": "https://github.com/argoproj/argo-cd/releases/tag/v3.5.4",
+  "release_api_url": "https://api.github.com/repos/argoproj/argo-cd/releases/tags/v3.5.4",
+  "published_at": "2026-10-06T20:55:31Z",
+  "draft": false,
+  "prerelease": false,
+  "tag_ref_api_url": "https://api.github.com/repos/argoproj/argo-cd/git/ref/tags/v3.5.4",
+  "commit": "d6d5b248ce00e1a2c512068002a93d3319767087",
+  "tag_source": "https://raw.githubusercontent.com/argoproj/argo-cd/v3.5.4/manifests/install.yaml",
+  "immutable_source": "https://raw.githubusercontent.com/argoproj/argo-cd/d6d5b248ce00e1a2c512068002a93d3319767087/manifests/install.yaml",
+  "manifest": "install/install.yaml",
+  "sha256": "1feb02cc7bacf3a379da58b0ca8c6f07d18288cd04d531dabd08816375e5e010",
+  "size_bytes": 1917766,
+  "tag_matches_immutable_source": true
+}

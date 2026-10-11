@@ -1,0 +1,5 @@
+---
+# Explicit opt-in after stopping Flux and protecting its managed resources.
+argocd_migrate_from_flux: false
+# Reapply only the root Application; controllers remain managed by Argo CD.
+argocd_bootstrap_reapply_root: false

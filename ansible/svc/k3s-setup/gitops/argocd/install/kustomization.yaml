@@ -1,0 +1,77 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: argocd
+resources:
+  - namespace.yaml
+  - install.yaml
+patches:
+  - target:
+      version: v1
+      kind: ConfigMap
+      name: argocd-cm
+    patch: |-
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: argocd-cm
+      data:
+        application.resourceTrackingMethod: annotation
+        resource.customizations.health.argoproj.io_Application: |
+          local hs = { status = "Progressing", message = "Waiting for Application to be Healthy and Synced" }
+          if obj.status ~= nil then
+            if obj.status.conditions ~= nil then
+              for _, condition in ipairs(obj.status.conditions) do
+                if condition.type == "ComparisonError" or condition.type == "InvalidSpecError" then
+                  hs.status = "Degraded"
+                  hs.message = condition.message or condition.type
+                  return hs
+                end
+              end
+            end
+            if obj.status.health ~= nil then
+              if obj.status.health.status == "Degraded" then
+                hs.status = "Degraded"
+                hs.message = obj.status.health.message or "Application is Degraded"
+                return hs
+              end
+              if obj.status.health.status == "Healthy" and obj.status.sync ~= nil and obj.status.sync.status == "Synced" then
+                hs.status = "Healthy"
+                hs.message = "Application is Healthy and Synced"
+              end
+            end
+          end
+          return hs
+        resource.customizations.health.bitnami.com_SealedSecret: |
+          local hs = { status = "Progressing", message = "Waiting for SealedSecret to be decrypted" }
+          if obj.status ~= nil then
+            if obj.status.observedGeneration ~= nil and obj.metadata.generation ~= nil and obj.status.observedGeneration ~= obj.metadata.generation then
+              hs.message = "Waiting for SealedSecret controller to observe the current generation"
+              return hs
+            end
+            if obj.status.conditions ~= nil then
+              for _, condition in ipairs(obj.status.conditions) do
+                if condition.type == "Synced" then
+                  if condition.status == "True" then
+                    hs.status = "Healthy"
+                    hs.message = condition.message or "SealedSecret is Synced"
+                  elseif condition.status == "False" then
+                    hs.status = "Degraded"
+                    hs.message = condition.message or "SealedSecret could not be decrypted"
+                  end
+                  return hs
+                end
+              end
+            end
+          end
+          return hs
+  - target:
+      version: v1
+      kind: Service
+      name: argocd-server
+    patch: |-
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: argocd-server
+      spec:
+        type: ClusterIP

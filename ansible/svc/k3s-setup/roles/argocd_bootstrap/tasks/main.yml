@@ -1,0 +1,159 @@
+---
+- name: Bootstrap Argo CD without rebuilding k3s or removing Flux resources
+  become: true
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  vars:
+    _argocd_directory: "{{ role_path }}/../../gitops/argocd"
+    _argocd_root: "{{ lookup('ansible.builtin.file', _argocd_directory ~ '/applications/root.yaml') | from_yaml }}"
+    _argocd_components: "{{ lookup('ansible.builtin.file', _argocd_directory ~ '/install/install.yaml') | from_yaml_all | list }}"
+    _argocd_children: "{{ (lookup('ansible.builtin.file', _argocd_directory ~ '/applications/kustomization.yaml') | from_yaml).resources }}"
+  block:
+    - name: Check Flux handover safety before any Argo CD mutation
+      ansible.builtin.include_tasks: guard.yml
+
+    - name: Check whether the Argo CD Application CRD exists
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/k3s
+          - kubectl
+          - get
+          - customresourcedefinition/applications.argoproj.io
+          - --ignore-not-found=true
+          - --output=name
+          - --request-timeout=30s
+      register: _argocd_crd_probe
+      changed_when: false
+      check_mode: false
+
+    - name: Check whether the root Application is already installed
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/k3s
+          - kubectl
+          - get
+          - "applications.argoproj.io/{{ _argocd_root.metadata.name }}"
+          - "--namespace={{ _argocd_root.metadata.namespace }}"
+          - --ignore-not-found=true
+          - --output=name
+          - --request-timeout=30s
+      register: _argocd_root_probe
+      changed_when: false
+      check_mode: false
+      when: _argocd_crd_probe.stdout | trim | length > 0
+
+    - name: Decide whether initial bootstrap is needed
+      ansible.builtin.set_fact:
+        _argocd_install_needed: "{{ _argocd_root_probe.stdout | default('') | trim | length == 0 }}"
+
+    - name: Leave the installed controllers and Applications under Argo CD control
+      ansible.builtin.debug:
+        msg: >-
+          Argo CD root Application already exists. Bootstrap is skipped;
+          change child Applications and resources in Git. To update the bootstrap
+          root spec only, explicitly set argocd_bootstrap_reapply_root=true.
+      when:
+        - not _argocd_install_needed
+        - not (argocd_bootstrap_reapply_root | bool)
+
+    - name: Report bootstrap needed without mutating the cluster in check mode
+      ansible.builtin.debug:
+        msg: Argo CD bootstrap or root reapply is needed; apply and readiness waits are skipped in check mode.
+      when:
+        - ansible_check_mode
+        - _argocd_install_needed or (argocd_bootstrap_reapply_root | bool)
+
+    - name: Install the committed Argo CD bootstrap and wait for Git handover
+      when:
+        - not ansible_check_mode
+        - _argocd_install_needed or (argocd_bootstrap_reapply_root | bool)
+      block:
+        - name: Allocate a protected staging directory
+          ansible.builtin.tempfile:
+            state: directory
+            prefix: k3s-argocd-bootstrap-
+          register: _argocd_stage
+          changed_when: false
+
+        - name: Apply bootstrap with guaranteed staging cleanup
+          block:
+            - name: Stage the committed Argo CD files
+              ansible.builtin.copy:
+                src: "{{ _argocd_directory }}/"
+                dest: "{{ _argocd_stage.path }}/"
+                mode: "0600"
+                directory_mode: "0700"
+              changed_when: false
+
+            - name: Server-side apply the pinned Argo CD installation only during initial bootstrap
+              ansible.builtin.command:
+                argv:
+                  - /usr/local/bin/k3s
+                  - kubectl
+                  - apply
+                  - --server-side
+                  - --field-manager=argocd-bootstrap
+                  - --request-timeout=60s
+                  - --kustomize
+                  - "{{ _argocd_stage.path }}/install"
+              register: _argocd_apply
+              changed_when: "'created' in _argocd_apply.stdout or 'configured' in _argocd_apply.stdout or 'serverside-applied' in _argocd_apply.stdout"
+              when: _argocd_install_needed
+
+            - name: Wait for Argo CD CRDs to be Established
+              ansible.builtin.command:
+                argv: >-
+                  {{ ['/usr/local/bin/k3s', 'kubectl', 'wait', '--for=condition=Established',
+                      '--timeout=180s', '--request-timeout=180s']
+                     + (_argocd_components | selectattr('kind', 'equalto', 'CustomResourceDefinition')
+                        | map(attribute='metadata.name')
+                        | map('regex_replace', '^', 'customresourcedefinition/') | list) }}
+              changed_when: false
+              when: _argocd_install_needed
+
+            - name: Wait for Argo CD controllers to finish rolling out
+              ansible.builtin.command:
+                argv:
+                  - /usr/local/bin/k3s
+                  - kubectl
+                  - rollout
+                  - status
+                  - "{{ item.kind | lower }}/{{ item.metadata.name }}"
+                  - "--namespace={{ _argocd_root.metadata.namespace }}"
+                  - --timeout=300s
+                  - --request-timeout=300s
+              loop: "{{ _argocd_components | selectattr('kind', 'in', ['Deployment', 'StatefulSet']) | list }}"
+              loop_control:
+                label: "{{ item.metadata.name }}"
+              changed_when: false
+              when: _argocd_install_needed
+
+            - name: Apply the root Application without deleting or recreating managed workloads
+              ansible.builtin.command:
+                argv:
+                  - /usr/local/bin/k3s
+                  - kubectl
+                  - apply
+                  - --server-side
+                  - --field-manager=argocd-bootstrap
+                  - --request-timeout=30s
+                  - "--filename={{ _argocd_stage.path }}/applications/root.yaml"
+              register: _argocd_root_apply
+              changed_when: "'created' in _argocd_root_apply.stdout or 'configured' in _argocd_root_apply.stdout or 'serverside-applied' in _argocd_root_apply.stdout"
+
+            - name: Wait for the root Application to create and synchronize its children
+              ansible.builtin.include_tasks: wait.yml
+              vars:
+                _argocd_wait_name: "{{ _argocd_root.metadata.name }}"
+
+            - name: Verify every child Application is Synced and Healthy
+              ansible.builtin.include_tasks: wait.yml
+              vars:
+                _argocd_wait_name: "{{ (lookup('ansible.builtin.file', _argocd_directory ~ '/applications/' ~ item) | from_yaml).metadata.name }}"
+              loop: "{{ _argocd_children }}"
+          always:
+            - name: Remove staged bootstrap files
+              ansible.builtin.file:
+                path: "{{ _argocd_stage.path }}"
+                state: absent
+              changed_when: false

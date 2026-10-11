@@ -1,0 +1,26 @@
+---
+- name: "Wait for {{ _argocd_wait_name }} to be Synced"
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/k3s
+      - kubectl
+      - wait
+      - "applications.argoproj.io/{{ _argocd_wait_name }}"
+      - "--namespace={{ _argocd_root.metadata.namespace }}"
+      - --for=jsonpath={.status.sync.status}=Synced
+      - --timeout=600s
+      - --request-timeout=600s
+  changed_when: false
+
+- name: "Wait for {{ _argocd_wait_name }} to be Healthy"
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/k3s
+      - kubectl
+      - wait
+      - "applications.argoproj.io/{{ _argocd_wait_name }}"
+      - "--namespace={{ _argocd_root.metadata.namespace }}"
+      - --for=jsonpath={.status.health.status}=Healthy
+      - --timeout=600s
+      - --request-timeout=600s
+  changed_when: false

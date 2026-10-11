@@ -1,0 +1,179 @@
+---
+- name: Discover Flux workload CRDs without hiding API errors
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/k3s
+      - kubectl
+      - get
+      - "customresourcedefinition/{{ item }}"
+      - --ignore-not-found=true
+      - --output=name
+      - --request-timeout=30s
+  loop:
+    - kustomizations.kustomize.toolkit.fluxcd.io
+    - helmreleases.helm.toolkit.fluxcd.io
+  register: _argocd_flux_crds
+  changed_when: false
+  check_mode: false
+
+- name: Inspect Flux Kustomizations across the cluster
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/k3s
+      - kubectl
+      - get
+      - kustomizations.kustomize.toolkit.fluxcd.io
+      - --all-namespaces
+      - --output=json
+      - --request-timeout=30s
+  register: _argocd_flux_kustomizations
+  changed_when: false
+  check_mode: false
+  when: _argocd_flux_crds.results[0].stdout | trim | length > 0
+
+- name: Inspect Flux HelmReleases before attempting a plain-manifest handover
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/k3s
+      - kubectl
+      - get
+      - helmreleases.helm.toolkit.fluxcd.io
+      - --all-namespaces
+      - --output=json
+      - --request-timeout=30s
+  register: _argocd_flux_helmreleases
+  changed_when: false
+  check_mode: false
+  when: _argocd_flux_crds.results[1].stdout | trim | length > 0
+
+- name: Inspect Flux controller Deployments
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/k3s
+      - kubectl
+      - get
+      - deployments
+      - --all-namespaces
+      - --selector=app.kubernetes.io/part-of=flux
+      - --output=json
+      - --request-timeout=30s
+  register: _argocd_flux_deployments
+  changed_when: false
+  check_mode: false
+
+- name: Collect the existing Flux handover state
+  ansible.builtin.set_fact:
+    _argocd_flux_items: "{{ (_argocd_flux_kustomizations.stdout | default('{\"items\":[]}') | from_json)['items'] }}"
+    _argocd_flux_helm_items: "{{ (_argocd_flux_helmreleases.stdout | default('{\"items\":[]}') | from_json)['items'] }}"
+    _argocd_flux_controller_items: "{{ (_argocd_flux_deployments.stdout | from_json)['items'] }}"
+
+- name: Require an explicit opt-in before replacing an existing Flux installation
+  ansible.builtin.assert:
+    that: argocd_migrate_from_flux | bool
+    fail_msg: >-
+      Flux is installed. Do not run the full k3s setup to migrate. Follow
+      gitops/MIGRATE-TO-ARGOCD.md, stop Flux controllers, suspend its Kustomizations
+      with prune=false and deletionPolicy=Orphan, then run k3s-argocd.yml with
+      argocd_migrate_from_flux=true. No Argo CD changes have been made.
+  when: _argocd_flux_items | length > 0 or _argocd_flux_helm_items | length > 0 or _argocd_flux_controller_items | length > 0
+
+- name: Reject unsupported Flux HelmRelease migration
+  ansible.builtin.assert:
+    that: _argocd_flux_helm_items | length == 0
+    fail_msg: Flux HelmReleases exist. Convert their charts/values to Argo CD Applications before migration.
+
+- name: Verify every Flux Kustomization is protected and matches the existing shared manifests
+  ansible.builtin.assert:
+    that:
+      - item.metadata.namespace == 'flux-system'
+      - item.metadata.name in _argocd_flux_paths
+      - item.spec.path == _argocd_flux_paths[item.metadata.name]
+      - item.spec.sourceRef.kind == 'GitRepository'
+      - item.spec.sourceRef.name == 'flux-system'
+      - item.spec.sourceRef.namespace | default('flux-system') == 'flux-system'
+      - item.spec.suspend | default(false) | bool
+      - not (item.spec.prune | bool)
+      - item.spec.deletionPolicy | default('MirrorPrune') == 'Orphan'
+      - item.metadata.deletionTimestamp is not defined
+      - item.spec.kubeConfig is not defined
+      - item.spec.postBuild is not defined
+      - item.spec.decryption is not defined
+      - item.spec.patches is not defined
+      - item.spec.components is not defined
+      - item.spec.commonMetadata is not defined
+      - item.spec.images is not defined
+      - item.spec.targetNamespace is not defined
+      - item.spec.namePrefix is not defined
+      - item.spec.nameSuffix is not defined
+    fail_msg: >-
+      Flux is not safely paused, or has extra/customized sources that this migration
+      does not cover. Protect and account for all resources before adopting them.
+  vars:
+    _argocd_flux_paths:
+      flux-system: ./ansible/svc/k3s-setup/gitops/clusters/local
+      sealed-secrets: ./ansible/svc/k3s-setup/gitops/infrastructure/sealed-secrets
+      apps: ./ansible/svc/k3s-setup/gitops/apps
+  loop: "{{ _argocd_flux_items }}"
+  loop_control:
+    label: "{{ item.metadata.namespace }}/{{ item.metadata.name }}"
+
+- name: Verify Flux controllers cannot resume reconciliation during adoption
+  ansible.builtin.assert:
+    that:
+      - item.spec.replicas | default(1) | int == 0
+      - item.status.replicas | default(0) | int == 0
+    fail_msg: Stop Flux controllers and wait until their replicas and Pods are gone before migration.
+  loop: "{{ _argocd_flux_controller_items }}"
+  loop_control:
+    label: "{{ item.metadata.namespace }}/{{ item.metadata.name }}"
+
+- name: Verify no Flux controller Pods are still running or terminating
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/k3s
+      - kubectl
+      - get
+      - pods
+      - --all-namespaces
+      - --selector=app.kubernetes.io/part-of=flux
+      - --output=json
+      - --request-timeout=30s
+  register: _argocd_flux_pods
+  changed_when: false
+  check_mode: false
+
+- name: Require Flux controller Pods to be fully stopped
+  ansible.builtin.assert:
+    that: (_argocd_flux_pods.stdout | from_json)['items'] | length == 0
+    fail_msg: Flux controller Pods still exist; wait for them to terminate before running Argo CD bootstrap.
+
+- name: Verify the current Flux source points at the same repository and branch
+  when: _argocd_flux_items | length > 0
+  block:
+    - name: Read the existing Flux GitRepository
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/k3s
+          - kubectl
+          - get
+          - gitrepositories.source.toolkit.fluxcd.io/flux-system
+          - --namespace=flux-system
+          - --output=json
+          - --request-timeout=30s
+      register: _argocd_flux_source
+      changed_when: false
+      check_mode: false
+
+    - name: Reject a handover from an unrelated or transformed Git source
+      ansible.builtin.assert:
+        that:
+          - _argocd_source.spec.url | regex_replace('\.git$', '') == _argocd_root.spec.source.repoURL | regex_replace('\.git$', '')
+          - _argocd_source.spec.ref.branch | default('') == _argocd_root.spec.source.targetRevision
+          - _argocd_source.spec.ref.commit is not defined
+          - _argocd_source.spec.ref.tag is not defined
+          - _argocd_source.spec.ref.semver is not defined
+          - _argocd_source.spec.include is not defined
+          - _argocd_source.spec.ignore is not defined
+        fail_msg: Flux uses a different source/revision. Align the Argo CD Applications with the actual source before migration.
+      vars:
+        _argocd_source: "{{ _argocd_flux_source.stdout | from_json }}"
