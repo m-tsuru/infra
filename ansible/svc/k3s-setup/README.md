@@ -225,7 +225,7 @@ etcd snapshot は 6 時間ごと、各 server に 10 世代保存します。こ
 `/var/lib/rancher/k3s/server/db/snapshots` の snapshot と
 `/var/lib/rancher/k3s/server/token` を、安全な暗号化済みの外部保管先へバックアップしてください。
 Sealed Secrets の秘密鍵（`kube-system` 内のラベル
-`sealed-secrets.bitnami.com/sealed-secrets-key` を持つ Secrets）も別途、安全に外部へ保存します。
+`sealedsecrets.bitnami.com/sealed-secrets-key` を持つ Secrets）も別途、安全に外部へ保存します。
 鍵をその鍵自身で kubeseal する方法では復旧できません。クラスタを再作成する場合は、
 Sealed Secrets を復元してから既存の暗号化リソースを使用してください。
 local-path のデータはノードローカルなので、3 台の etcd HA とは別にアプリケーションのバックアップが必要です。

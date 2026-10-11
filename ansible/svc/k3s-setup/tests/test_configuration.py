@@ -131,6 +131,16 @@ class ConfigurationTests(unittest.TestCase):
         self.assertTrue(source["spec"]["url"].startswith("https://"))
         self.assertNotIn("secretRef", source["spec"])
 
+    def test_documented_sealing_key_selector(self):
+        correct = "sealedsecrets.bitnami.com/sealed-secrets-key"
+        incorrect = "sealed-secrets.bitnami.com/sealed-secrets-key"
+        paths = [SERVICE / "README.md"] + list((ROOT / ".docs").rglob("*.md"))
+        paths += list(GITOPS.rglob("*.md"))
+        for path in paths:
+            with self.subTest(path=path):
+                self.assertNotIn(incorrect, path.read_text())
+        self.assertIn(correct, (SERVICE / "README.md").read_text())
+
     def test_no_plaintext_kubernetes_secrets_or_vault_files(self):
         for path in GITOPS.rglob("*.yaml"):
             for doc in load_documents(path):
