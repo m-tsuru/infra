@@ -1,0 +1,96 @@
+---
+# A durable revision survives failed plays; transient handler notifications do not.
+- name: Compute the desired k3s runtime revision
+  ansible.builtin.set_fact:
+    _k3s_desired_revision: >-
+      {{ [lookup('ansible.builtin.template', role_path ~ '/templates/config.yaml.j2'),
+          lookup('ansible.builtin.template', role_path ~ '/templates/k3s.service.j2'),
+          k3s_version, _k3s_effective_token] | to_json | hash('sha256') }}
+  no_log: true
+
+- name: Inspect the last successfully applied revision
+  ansible.builtin.stat:
+    path: /etc/rancher/k3s/.ansible-applied-revision
+  register: _k3s_revision_stat
+
+- name: Read the last successfully applied revision
+  ansible.builtin.slurp:
+    src: /etc/rancher/k3s/.ansible-applied-revision
+  register: _k3s_applied_revision
+  no_log: true
+  when: _k3s_revision_stat.stat.exists
+
+- name: Decide whether k3s needs a start or restart
+  ansible.builtin.set_fact:
+    _k3s_restart_required: >-
+      {{ not _k3s_revision_stat.stat.exists
+         or (_k3s_applied_revision.content | default('') | b64decode | trim) != _k3s_desired_revision
+         or _k3s_download.changed or _k3s_config.changed
+         or _k3s_token_file.changed or _k3s_unit.changed }}
+  no_log: true
+
+- name: Inspect whether k3s is already running
+  ansible.builtin.service_facts:
+
+- name: Distinguish starting an inactive member from restarting a running member
+  ansible.builtin.set_fact:
+    _k3s_service_running: "{{ ansible_facts.services.get('k3s.service', {}).get('state', 'stopped') == 'running' }}"
+
+- name: Inspect registered etcd server nodes before a rolling restart
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/k3s
+      - kubectl
+      - get
+      - nodes
+      - --selector=node-role.kubernetes.io/etcd
+      - --output=json
+      - --request-timeout=10s
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  register: _k3s_existing_servers
+  changed_when: false
+  when:
+    - _k3s_existing_member.stat.exists
+    - _k3s_restart_required
+    - _k3s_service_running
+    - not ansible_check_mode
+
+- name: Refuse to restart a two-member etcd cluster
+  ansible.builtin.assert:
+    that: (_k3s_existing_servers.stdout | from_json)['items'] | length != 2
+    fail_msg: >-
+      A two-member etcd cluster cannot tolerate a rolling restart. Finish joining
+      the third server first (limit the play to that host), or recover manually.
+  when:
+    - _k3s_existing_member.stat.exists
+    - _k3s_restart_required
+    - _k3s_service_running
+    - not ansible_check_mode
+
+- name: Verify all other servers are healthy before restarting an existing HA member
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/k3s
+      - kubectl
+      - get
+      - --raw=/readyz
+      - --request-timeout=10s
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  delegate_to: "{{ item }}"
+  loop: "{{ groups['k3s_servers'] | reject('equalto', inventory_hostname) | list }}"
+  changed_when: false
+  when:
+    - _k3s_existing_member.stat.exists
+    - _k3s_restart_required
+    - _k3s_service_running
+    - not ansible_check_mode
+    - (_k3s_existing_servers.stdout | from_json)['items'] | length >= 3
+
+- name: Enable k3s and apply any pending runtime revision
+  ansible.builtin.systemd_service:
+    name: k3s
+    daemon_reload: true
+    enabled: true
+    state: "{{ 'restarted' if _k3s_restart_required and _k3s_service_running else 'started' }}"

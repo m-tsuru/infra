@@ -1,0 +1,5 @@
+---
+# Recovery only: reapply the committed bootstrap manifests even if the root Flux
+# Kustomization already exists, taking conflicting field ownership if necessary.
+# Leave false during normal runs; Git, not Ansible, owns ongoing cluster changes.
+gitops_bootstrap_force: false

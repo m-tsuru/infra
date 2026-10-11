@@ -1,0 +1,42 @@
+---
+- name: Inspect the initial server's generated secure token
+  ansible.builtin.stat:
+    path: /var/lib/rancher/k3s/server/token
+  delegate_to: "{{ k3s_bootstrap_host }}"
+  register: _k3s_server_token_stat
+
+- name: Require a secure server token before another server joins
+  ansible.builtin.assert:
+    that: _k3s_server_token_stat.stat.exists
+    fail_msg: Initialize the bootstrap server first; joining with a password-only token is not allowed.
+  when:
+    - inventory_hostname != k3s_bootstrap_host
+    - not ansible_check_mode
+
+- name: Read the CA-bound server token over authenticated SSH
+  ansible.builtin.slurp:
+    src: /var/lib/rancher/k3s/server/token
+  delegate_to: "{{ k3s_bootstrap_host }}"
+  register: _k3s_server_token
+  no_log: true
+  when: _k3s_server_token_stat.stat.exists
+
+- name: Reject a changed Vault password or an invalid secure token
+  ansible.builtin.assert:
+    that:
+      - _k3s_secure_token is match('^K10[0-9a-f]{64}::server:.+$')
+      - >-
+        vault_k3s_token == _k3s_secure_token or
+        vault_k3s_token == _k3s_secure_token.split('::', 1)[1].split(':', 1)[1]
+  vars:
+    _k3s_secure_token: "{{ _k3s_server_token.content | b64decode | trim }}"
+  no_log: true
+  when: _k3s_server_token_stat.stat.exists
+
+- name: Select the initial password or secure joining token
+  ansible.builtin.set_fact:
+    _k3s_effective_token: >-
+      {{ vault_k3s_token if inventory_hostname == k3s_bootstrap_host
+         or not _k3s_server_token_stat.stat.exists
+         else (_k3s_server_token.content | b64decode | trim) }}
+  no_log: true

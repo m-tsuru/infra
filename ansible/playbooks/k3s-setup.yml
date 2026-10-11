@@ -1,0 +1,57 @@
+---
+- name: Set up k3s HA servers one at a time
+  hosts: k3s_servers
+  become: true
+  gather_facts: true
+  order: inventory
+  serial: 1
+  any_errors_fatal: true
+  tags:
+    - k3s
+  roles:
+    - k3s
+
+- name: Export administrative access and bootstrap GitOps
+  hosts: k3s_bootstrap
+  become: true
+  gather_facts: false
+  vars:
+    k3s_kubeconfig_path: "{{ playbook_dir }}/../svc/k3s-setup/artifacts/kubeconfig.yaml"
+  tasks:
+    - name: Export a protected kubeconfig to the Ansible controller
+      tags:
+        - kubeconfig
+      when: not ansible_check_mode
+      block:
+        - name: Create the local artifacts directory
+          ansible.builtin.file:
+            path: "{{ k3s_kubeconfig_path | dirname }}"
+            state: directory
+            mode: "0700"
+          delegate_to: localhost
+          become: false
+
+        - name: Read the administrator kubeconfig
+          ansible.builtin.slurp:
+            src: /etc/rancher/k3s/k3s.yaml
+          register: _k3s_kubeconfig
+          no_log: true
+
+        - name: Write kubeconfig with the reachable initial server IP
+          ansible.builtin.copy:
+            dest: "{{ k3s_kubeconfig_path }}"
+            content: >-
+              {{ (_k3s_kubeconfig.content | b64decode)
+                 | replace('https://127.0.0.1:6443',
+                           'https://' ~ hostvars[k3s_bootstrap_host].ansible_host ~ ':6443') }}
+            mode: "0600"
+          delegate_to: localhost
+          become: false
+          no_log: true
+          diff: false
+
+    - name: Bootstrap Flux and then leave reconciliation to Git
+      ansible.builtin.import_role:
+        name: gitops_bootstrap
+      tags:
+        - gitops

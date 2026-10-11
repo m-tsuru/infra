@@ -1,0 +1,241 @@
+---
+- name: Validate supported hosts and HA inventory
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['os_family'] == 'Debian'
+      - ansible_facts['distribution'] in ['Debian', 'Ubuntu']
+      - ansible_facts['service_mgr'] == 'systemd'
+      - ansible_facts['architecture'] in ['x86_64', 'aarch64', 'arm64']
+      - groups['k3s_servers'] | length >= 3
+      - groups['k3s_servers'] | length % 2 == 1
+      - groups['k3s_servers'] | first == k3s_bootstrap_host
+      - groups['k3s_bootstrap'] == [k3s_bootstrap_host]
+      - k3s_version is match('^v[0-9]+\.[0-9]+\.[0-9]+\+k3s[0-9]+$')
+    fail_msg: >-
+      Use Debian/Ubuntu with systemd on amd64/arm64 and an odd number of at least
+      three servers. The first server and sole k3s_bootstrap host must match
+      k3s_bootstrap_host. Pin k3s_version to an exact release.
+
+- name: Require the Vault-managed cluster token
+  ansible.builtin.assert:
+    that: vault_k3s_token is defined
+    fail_msg: >-
+      Create ansible/svc/k3s-setup/inventory/group_vars/k3s_cluster/vault.yml
+      with ansible-vault and define vault_k3s_token; use --ask-vault-pass.
+
+- name: Validate the cluster token without exposing its value
+  ansible.builtin.assert:
+    that:
+      - vault_k3s_token is string
+      - vault_k3s_token | length >= 32
+      - "'\n' not in vault_k3s_token"
+  no_log: true
+
+- name: Inspect whether this server already has an etcd member
+  ansible.builtin.stat:
+    path: /var/lib/rancher/k3s/server/db/etcd/member
+  register: _k3s_existing_member
+
+- name: Wait for the initial server before joining another etcd member
+  ansible.builtin.wait_for:
+    host: "{{ hostvars[k3s_bootstrap_host].ansible_host }}"
+    port: 6443
+    timeout: 180
+  delegate_to: localhost
+  become: false
+  when:
+    - inventory_hostname != k3s_bootstrap_host
+    - not ansible_check_mode
+
+- name: Obtain the CA-bound joining token
+  ansible.builtin.include_tasks: token.yml
+
+- name: Install host prerequisites
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - iptables
+      - kmod
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Set the assigned host name
+  ansible.builtin.hostname:
+    name: "{{ inventory_hostname }}"
+    use: systemd
+
+- name: Resolve cluster hosts without a local DNS server
+  ansible.builtin.blockinfile:
+    path: /etc/hosts
+    marker: "# {mark} ANSIBLE K3S CLUSTER"
+    block: |
+      {% for host in groups['k3s_servers'] %}
+      {{ hostvars[host].ansible_host }} {{ host }} {{ host.split('.')[0] }}
+      {% endfor %}
+
+- name: Inspect active swap
+  ansible.builtin.command:
+    argv:
+      - swapon
+      - --noheadings
+      - --show=NAME
+  register: _k3s_swap
+  changed_when: false
+  check_mode: false
+
+- name: Disable active swap
+  ansible.builtin.command:
+    argv:
+      - swapoff
+      - --all
+  when: _k3s_swap.stdout | trim | length > 0
+  changed_when: true
+
+- name: Disable fstab-managed swap on subsequent boots
+  ansible.builtin.replace:
+    path: /etc/fstab
+    regexp: '^(?!#)(\S+\s+\S+\s+swap\s+.*)$'
+    replace: '# \1'
+
+- name: Persist required kernel modules
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/k3s.conf
+    content: |
+      overlay
+      br_netfilter
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Load required kernel modules
+  ansible.builtin.command:
+    argv:
+      - modprobe
+      - "{{ item }}"
+  loop:
+    - overlay
+    - br_netfilter
+  changed_when: false
+
+- name: Configure kernel networking for Flannel
+  ansible.builtin.copy:
+    dest: /etc/sysctl.d/90-k3s.conf
+    content: |
+      net.ipv4.ip_forward = 1
+      net.bridge.bridge-nf-call-iptables = 1
+      net.bridge.bridge-nf-call-ip6tables = 1
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Apply kernel networking settings on every run
+  ansible.builtin.command:
+    argv:
+      - sysctl
+      - --load=/etc/sysctl.d/90-k3s.conf
+  changed_when: false
+
+- name: Create the protected k3s configuration directory
+  ansible.builtin.file:
+    path: /etc/rancher/k3s
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Install the cluster token outside process arguments
+  ansible.builtin.copy:
+    dest: /etc/rancher/k3s/token
+    content: "{{ _k3s_effective_token }}\n"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  diff: false
+  register: _k3s_token_file
+
+- name: Configure k3s server and embedded etcd
+  ansible.builtin.template:
+    src: config.yaml.j2
+    dest: /etc/rancher/k3s/config.yaml
+    owner: root
+    group: root
+    mode: "0600"
+  register: _k3s_config
+
+- name: Download the pinned k3s binary with official checksum verification
+  ansible.builtin.get_url:
+    url: "{{ _k3s_release_url }}/{{ _k3s_binary }}"
+    checksum: "sha256:{{ _k3s_release_url }}/sha256sum-{{ _k3s_arch }}.txt"
+    dest: /usr/local/bin/k3s
+    owner: root
+    group: root
+    mode: "0755"
+    timeout: 60
+  vars:
+    _k3s_arch: "{{ 'amd64' if ansible_facts['architecture'] == 'x86_64' else 'arm64' }}"
+    _k3s_binary: "{{ 'k3s' if _k3s_arch == 'amd64' else 'k3s-arm64' }}"
+    _k3s_release_url: "https://github.com/k3s-io/k3s/releases/download/{{ k3s_version | replace('+', '%2B') }}"
+  register: _k3s_download
+  until: _k3s_download is succeeded
+  retries: 3
+  delay: 5
+
+- name: Install the k3s systemd unit
+  ansible.builtin.template:
+    src: k3s.service.j2
+    dest: /etc/systemd/system/k3s.service
+    owner: root
+    group: root
+    mode: "0644"
+  register: _k3s_unit
+
+- name: Safely start or restart k3s and track pending changes
+  ansible.builtin.include_tasks: restart.yml
+
+- name: Wait for the local control plane to become healthy
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/k3s
+      - kubectl
+      - get
+      - --raw=/readyz
+      - --request-timeout=10s
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  register: _k3s_api_ready
+  until: _k3s_api_ready.rc == 0
+  retries: 30
+  delay: 5
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Wait for this server to be a Ready Kubernetes node
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/k3s
+      - kubectl
+      - wait
+      - "node/{{ inventory_hostname }}"
+      - --for=condition=Ready
+      - --timeout=15s
+      - --request-timeout=15s
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  register: _k3s_node_ready
+  until: _k3s_node_ready.rc == 0
+  retries: 12
+  delay: 5
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Record the runtime revision only after the server is healthy
+  ansible.builtin.copy:
+    dest: /etc/rancher/k3s/.ansible-applied-revision
+    content: "{{ _k3s_desired_revision }}\n"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  when: not ansible_check_mode

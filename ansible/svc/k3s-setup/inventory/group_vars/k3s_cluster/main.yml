@@ -1,0 +1,4 @@
+---
+k3s_bootstrap_host: sakuta.local.sasakulab.com
+# Set the SSH user here or pass --user on the command line.
+ansible_user: tsuru

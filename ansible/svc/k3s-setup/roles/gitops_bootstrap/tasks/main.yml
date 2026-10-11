@@ -1,0 +1,242 @@
+---
+- name: Bootstrap GitOps on the bootstrap node
+  become: true
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  vars:
+    _gitops_bootstrap_manifest_directory: "{{ role_path }}/../../gitops/clusters/local/flux-system"
+    _gitops_bootstrap_components: >-
+      {{ lookup('ansible.builtin.file', _gitops_bootstrap_manifest_directory ~ '/gotk-components.yaml')
+         | ansible.builtin.from_yaml_all | list }}
+    _gitops_bootstrap_sync: >-
+      {{ lookup('ansible.builtin.file', _gitops_bootstrap_manifest_directory ~ '/gotk-sync.yaml')
+         | ansible.builtin.from_yaml_all | list }}
+    _gitops_bootstrap_root: >-
+      {{ _gitops_bootstrap_sync | selectattr('kind', 'equalto', 'Kustomization') | first }}
+    _gitops_bootstrap_cluster: >-
+      {{ lookup('ansible.builtin.file', _gitops_bootstrap_manifest_directory ~ '/../kustomization.yaml')
+         | ansible.builtin.from_yaml }}
+    _gitops_bootstrap_needed: >-
+      {{ (gitops_bootstrap_force | bool)
+         or (_gitops_bootstrap_root_probe.stdout | default('') | trim | length == 0) }}
+  block:
+    - name: Check whether the root Flux Kustomization CRD exists
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/k3s
+          - kubectl
+          - get
+          - "customresourcedefinition/kustomizations.{{ _gitops_bootstrap_root.apiVersion.split('/')[0] }}"
+          - --ignore-not-found=true
+          - --output=name
+          - --request-timeout=30s
+      register: _gitops_bootstrap_crd_probe
+      changed_when: false
+      check_mode: false
+
+    - name: Check whether the root Flux Kustomization is already installed
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/k3s
+          - kubectl
+          - get
+          - "kustomizations.{{ _gitops_bootstrap_root.apiVersion.split('/')[0] }}/{{ _gitops_bootstrap_root.metadata.name }}"
+          - "--namespace={{ _gitops_bootstrap_root.metadata.namespace }}"
+          - --ignore-not-found=true
+          - --output=name
+          - --request-timeout=30s
+      register: _gitops_bootstrap_root_probe
+      changed_when: false
+      check_mode: false
+      when: _gitops_bootstrap_crd_probe.stdout | trim | length > 0
+
+    - name: Leave the installed GitOps system under Flux control
+      ansible.builtin.debug:
+        msg: >-
+          Root Flux Kustomization already exists; skipping bootstrap. Make ongoing
+          changes in Git, or set gitops_bootstrap_force=true explicitly for recovery.
+      when: not (_gitops_bootstrap_needed | bool)
+
+    - name: Report bootstrap needed without mutating the cluster in check mode
+      ansible.builtin.debug:
+        msg: GitOps bootstrap is needed; apply and readiness waits are skipped in check mode.
+      when:
+        - ansible_check_mode
+        - _gitops_bootstrap_needed | bool
+
+    - name: Install the committed Flux bootstrap manifests and hand control to Git
+      when:
+        - not ansible_check_mode
+        - _gitops_bootstrap_needed | bool
+      block:
+        - name: Allocate a temporary manifest directory
+          ansible.builtin.tempfile:
+            state: directory
+            prefix: k3s-gitops-bootstrap-
+          register: _gitops_bootstrap_stage
+          changed_when: false
+
+        - name: Apply bootstrap manifests with guaranteed staging cleanup
+          block:
+            - name: Copy committed Flux manifests from the Ansible controller
+              ansible.builtin.copy:
+                src: "{{ _gitops_bootstrap_manifest_directory }}/{{ item }}"
+                dest: "{{ _gitops_bootstrap_stage.path }}/{{ item }}"
+                mode: "0600"
+              loop:
+                - gotk-components.yaml
+                - gotk-sync.yaml
+              changed_when: false
+
+            - name: Check whether the Flux namespace exists
+              ansible.builtin.command:
+                argv:
+                  - /usr/local/bin/k3s
+                  - kubectl
+                  - get
+                  - "namespace/{{ _gitops_bootstrap_root.metadata.namespace }}"
+                  - --ignore-not-found=true
+                  - --output=name
+                  - --request-timeout=30s
+              register: _gitops_bootstrap_namespace_probe
+              changed_when: false
+
+            # Dry-run diff cannot evaluate namespaced resources until this namespace exists.
+            - name: Create the upstream Flux namespace when absent
+              ansible.builtin.command:
+                argv:
+                  - /usr/local/bin/k3s
+                  - kubectl
+                  - apply
+                  - --server-side
+                  - --field-manager=flux-client-side-apply
+                  - --request-timeout=30s
+                  - --filename=-
+                stdin: >-
+                  {{ _gitops_bootstrap_components
+                     | selectattr('kind', 'equalto', 'Namespace')
+                     | selectattr('metadata.name', 'equalto', _gitops_bootstrap_root.metadata.namespace)
+                     | first | ansible.builtin.to_json }}
+              when: _gitops_bootstrap_namespace_probe.stdout | trim | length == 0
+              changed_when: true
+
+            # Flux recognizes this bootstrap manager and can adopt its field ownership.
+            - name: Compare committed Flux components with the API server
+              ansible.builtin.command:
+                argv:
+                  - /usr/local/bin/k3s
+                  - kubectl
+                  - diff
+                  - --server-side
+                  - --field-manager=flux-client-side-apply
+                  - "--force-conflicts={{ gitops_bootstrap_force | bool | ternary('true', 'false') }}"
+                  - --request-timeout=30s
+                  - "--filename={{ _gitops_bootstrap_stage.path }}/gotk-components.yaml"
+              register: _gitops_bootstrap_components_diff
+              changed_when: false
+              failed_when: _gitops_bootstrap_components_diff.rc not in [0, 1]
+
+            - name: Server-side apply changed Flux components including large CRDs
+              ansible.builtin.command:
+                argv:
+                  - /usr/local/bin/k3s
+                  - kubectl
+                  - apply
+                  - --server-side
+                  - --field-manager=flux-client-side-apply
+                  - "--force-conflicts={{ gitops_bootstrap_force | bool | ternary('true', 'false') }}"
+                  - --request-timeout=30s
+                  - "--filename={{ _gitops_bootstrap_stage.path }}/gotk-components.yaml"
+              when: _gitops_bootstrap_components_diff.rc == 1
+              changed_when: true
+
+            - name: Wait for every vendored Flux CRD to be Established
+              ansible.builtin.command:
+                argv: >-
+                  {{ ['/usr/local/bin/k3s', 'kubectl', 'wait', '--for=condition=Established',
+                                        '--timeout=180s', '--request-timeout=180s']
+                     + (_gitops_bootstrap_components
+                        | selectattr('kind', 'equalto', 'CustomResourceDefinition')
+                        | map(attribute='metadata.name')
+                        | map('regex_replace', '^', 'customresourcedefinition/') | list) }}
+              changed_when: false
+
+            - name: Wait for every vendored Flux controller Deployment to be Available
+              ansible.builtin.command:
+                argv: >-
+                  {{ ['/usr/local/bin/k3s', 'kubectl', 'wait', '--for=condition=Available',
+                      '--timeout=300s', '--request-timeout=300s',
+                      '--namespace=' ~ _gitops_bootstrap_root.metadata.namespace]
+                     + (_gitops_bootstrap_components
+                        | selectattr('kind', 'equalto', 'Deployment')
+                        | map(attribute='metadata.name')
+                        | map('regex_replace', '^', 'deployment/') | list) }}
+              changed_when: false
+
+            - name: Compare the committed Flux source and root sync after controllers are ready
+              ansible.builtin.command:
+                argv:
+                  - /usr/local/bin/k3s
+                  - kubectl
+                  - diff
+                  - --server-side
+                  - --field-manager=flux-client-side-apply
+                  - "--force-conflicts={{ gitops_bootstrap_force | bool | ternary('true', 'false') }}"
+                  - --request-timeout=30s
+                  - "--filename={{ _gitops_bootstrap_stage.path }}/gotk-sync.yaml"
+              register: _gitops_bootstrap_sync_diff
+              changed_when: false
+              failed_when: _gitops_bootstrap_sync_diff.rc not in [0, 1]
+
+            - name: Server-side apply the changed Flux source and root sync
+              ansible.builtin.command:
+                argv:
+                  - /usr/local/bin/k3s
+                  - kubectl
+                  - apply
+                  - --server-side
+                  - --field-manager=flux-client-side-apply
+                  - "--force-conflicts={{ gitops_bootstrap_force | bool | ternary('true', 'false') }}"
+                  - --request-timeout=30s
+                  - "--filename={{ _gitops_bootstrap_stage.path }}/gotk-sync.yaml"
+              when: _gitops_bootstrap_sync_diff.rc == 1
+              changed_when: true
+
+            - name: Wait for the root Flux Kustomization to be Ready
+              ansible.builtin.command:
+                argv:
+                  - /usr/local/bin/k3s
+                  - kubectl
+                  - wait
+                  - "kustomizations.{{ _gitops_bootstrap_root.apiVersion.split('/')[0] }}/{{ _gitops_bootstrap_root.metadata.name }}"
+                  - "--namespace={{ _gitops_bootstrap_root.metadata.namespace }}"
+                  - --for=condition=Ready
+                  - --timeout=600s
+                  - --request-timeout=600s
+              changed_when: false
+
+            - name: Wait for each child Flux Kustomization to be Ready
+              ansible.builtin.command:
+                argv:
+                  - /usr/local/bin/k3s
+                  - kubectl
+                  - wait
+                  - "kustomizations.{{ _gitops_bootstrap_child.apiVersion.split('/')[0] }}/{{ _gitops_bootstrap_child.metadata.name }}"
+                  - "--namespace={{ _gitops_bootstrap_child.metadata.namespace }}"
+                  - --for=condition=Ready
+                  - --timeout=600s
+                  - --request-timeout=600s
+              vars:
+                _gitops_bootstrap_child: >-
+                  {{ lookup('ansible.builtin.file', _gitops_bootstrap_manifest_directory ~ '/../' ~ item)
+                     | ansible.builtin.from_yaml }}
+              loop: "{{ _gitops_bootstrap_cluster.resources | reject('equalto', 'flux-system') | list }}"
+              loop_control:
+                label: "{{ _gitops_bootstrap_child.metadata.name }}"
+              changed_when: false
+          always:
+            - name: Remove the temporary bootstrap manifests
+              ansible.builtin.file:
+                path: "{{ _gitops_bootstrap_stage.path }}"
+                state: absent
+              changed_when: false

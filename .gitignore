@@ -1,0 +1,10 @@
+# Generated administrative credentials and local secret material.
+ansible/svc/*/artifacts/
+.vault-pass
+.vault-password*
+*.kubeconfig
+*.pem
+*.key
+__pycache__/
+
+# Vault-encrypted group_vars/*/vault.yml should be committed, not ignored.
