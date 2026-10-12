@@ -8,6 +8,32 @@ patches:
   - target:
       version: v1
       kind: ConfigMap
+      name: argocd-cmd-params-cm
+    patch: |-
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: argocd-cmd-params-cm
+      data:
+        server.insecure: 'true'
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: argocd-server
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: argocd-server
+      spec:
+        template:
+          metadata:
+            annotations:
+              lan.sasakulab.com/tls-termination: traefik-v1
+  - target:
+      version: v1
+      kind: ConfigMap
       name: argocd-cm
     patch: |-
       apiVersion: v1
@@ -16,6 +42,7 @@ patches:
         name: argocd-cm
       data:
         application.resourceTrackingMethod: annotation
+        url: https://argocd.local.sasakulab.com
         resource.customizations.health.argoproj.io_Application: |
           local hs = { status = "Progressing", message = "Waiting for Application to be Healthy and Synced" }
           if obj.status ~= nil then

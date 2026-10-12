@@ -1,0 +1,97 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lan-dns
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lan-coredns
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: lan-coredns
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: lan-coredns
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: lan-coredns
+      containers:
+        - name: coredns
+          image: coredns/coredns:1.14.7
+          args: [-conf, /etc/coredns/Corefile]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          ports:
+            - {name: dns-udp, containerPort: 1053, protocol: UDP}
+            - {name: dns-tcp, containerPort: 1053, protocol: TCP}
+          resources:
+            requests: {cpu: 50m, memory: 32Mi}
+            limits: {memory: 128Mi}
+          readinessProbe:
+            httpGet: {path: /ready, port: 8181}
+          livenessProbe:
+            httpGet: {path: /health, port: 8080}
+          volumeMounts:
+            - {name: config, mountPath: /etc/coredns, readOnly: true}
+      volumes:
+        - name: config
+          configMap:
+            name: lan-coredns
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lan-coredns
+  labels:
+    app.kubernetes.io/name: lan-coredns
+    lan.sasakulab.com/vip: dns
+  annotations:
+    metallb.io/address-pool: lan-dns
+    metallb.io/loadBalancerIPs: 192.168.37.254
+spec:
+  type: LoadBalancer
+  allocateLoadBalancerNodePorts: false
+  externalTrafficPolicy: Local
+  loadBalancerSourceRanges: [192.168.0.0/16]
+  selector:
+    app.kubernetes.io/name: lan-coredns
+  ports:
+    - {name: dns-udp, port: 53, targetPort: dns-udp, protocol: UDP}
+    - {name: dns-tcp, port: 53, targetPort: dns-tcp, protocol: TCP}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: lan-dns-clients
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: lan-coredns
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - ipBlock: {cidr: 192.168.0.0/16}
+      ports:
+        - {port: 1053, protocol: UDP}
+        - {port: 1053, protocol: TCP}

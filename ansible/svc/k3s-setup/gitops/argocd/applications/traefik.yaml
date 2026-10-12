@@ -1,0 +1,71 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: local-traefik
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: '-17'
+spec:
+  project: default
+  source:
+    repoURL: https://traefik.github.io/charts
+    chart: traefik
+    targetRevision: 41.7.1
+    helm:
+      releaseName: traefik
+      valuesObject:
+        fullnameOverride: lan-traefik
+        deployment:
+          replicas: 2
+        ingressClass:
+          name: lan-traefik
+          isDefaultClass: false
+        providers:
+          kubernetesCRD:
+            ingressClass: lan-traefik
+            allowCrossNamespace: false
+          kubernetesIngress:
+            ingressClass: lan-traefik
+        service:
+          labels:
+            lan.sasakulab.com/vip: ingress
+          annotations:
+            metallb.io/address-pool: lan-ingress
+            metallb.io/loadBalancerIPs: 192.168.37.253
+          spec:
+            type: LoadBalancer
+            externalTrafficPolicy: Local
+            allocateLoadBalancerNodePorts: false
+            loadBalancerSourceRanges:
+            - 192.168.0.0/16
+        ports:
+          web:
+            http:
+              redirections:
+                entryPoint:
+                  to: websecure
+                  scheme: https
+                  permanent: true
+        ingressRoute:
+          dashboard:
+            enabled: false
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: traefik
+  syncPolicy:
+    automated:
+      enabled: true
+      selfHeal: true
+      prune: false
+      allowEmpty: false
+    syncOptions:
+    - ServerSideApply=true
+    - FailOnSharedResource=true
+    - ClientSideApplyMigration=false
+    - CreateNamespace=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 1m

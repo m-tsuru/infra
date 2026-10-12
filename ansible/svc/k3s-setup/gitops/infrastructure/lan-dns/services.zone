@@ -1,0 +1,6 @@
+$ORIGIN local.sasakulab.com.
+$TTL 60
+@ IN SOA ns.hij1.local.sasakulab.com. hostmaster.sasakulab.com. ( 2026101301 3600 600 86400 60 )
+@ IN NS ns.hij1.local.sasakulab.com.
+argocd IN A 192.168.37.253
+postgres IN A 192.168.37.253

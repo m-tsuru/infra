@@ -7,3 +7,8 @@ resources:
   - sealed-secrets.yaml
   - postgres-operator.yaml
   - apps.yaml
+  - metallb.yaml
+  - metallb-config.yaml
+  - traefik.yaml
+  - lan-dns.yaml
+  - lan-routes.yaml

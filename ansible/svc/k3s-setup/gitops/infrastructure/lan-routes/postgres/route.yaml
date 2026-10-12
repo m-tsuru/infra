@@ -1,0 +1,33 @@
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: postgres-ui-auth
+spec:
+  basicAuth:
+    secret: postgres-ui-auth
+    removeHeader: true
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: lan-postgres-ui
+  annotations:
+    argocd.argoproj.io/sync-wave: '10'
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: 'true'
+    traefik.ingress.kubernetes.io/router.middlewares: postgres-operator-postgres-ui-auth@kubernetescrd
+spec:
+  ingressClassName: lan-traefik
+  tls:
+    - hosts: [postgres.local.sasakulab.com]
+      secretName: lan-apps-tls
+  rules:
+    - host: postgres.local.sasakulab.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: postgres-operator-ui
+                port: {number: 80}

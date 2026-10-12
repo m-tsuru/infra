@@ -1,0 +1,22 @@
+hij1.local.sasakulab.com:1053 {
+    errors
+    file /etc/coredns/hij1.zone hij1.local.sasakulab.com {
+        reload 30s
+    }
+}
+argocd.local.sasakulab.com:1053 postgres.local.sasakulab.com:1053 {
+    errors
+    file /etc/coredns/services.zone local.sasakulab.com {
+        reload 30s
+    }
+}
+.:1053 {
+    errors
+    health :8080
+    ready :8181
+    # Explicit resolvers, never /etc/resolv.conf or the LAN VIP.
+    forward . 1.1.1.1 9.9.9.9
+    cache 30
+    loop
+    reload
+}

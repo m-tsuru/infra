@@ -1,0 +1,24 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: lan-argocd
+  namespace: argocd
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: 'true'
+    traefik.ingress.kubernetes.io/service.serversscheme: http
+spec:
+  ingressClassName: lan-traefik
+  tls:
+    - hosts: [argocd.local.sasakulab.com]
+      secretName: lan-apps-tls
+  rules:
+    - host: argocd.local.sasakulab.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: argocd-server
+                port: {name: http}

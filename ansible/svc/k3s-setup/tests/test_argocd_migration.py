@@ -254,13 +254,17 @@ class MigrationLayoutTests(unittest.TestCase):
         resources = load_yaml(source / "kustomization.yaml")["resources"]
         self.assertEqual(set(resources), {
             "argocd.yaml", "sealed-secrets.yaml", "postgres-operator.yaml", "apps.yaml",
+            "metallb.yaml", "metallb-config.yaml", "traefik.yaml", "lan-dns.yaml", "lan-routes.yaml",
         })
         self.assertNotIn("root.yaml", resources)
         children = [load_yaml(source / name) for name in resources]
         self.assertNotIn(root["metadata"]["name"], [app["metadata"]["name"] for app in children])
         for app in children:
             self.assertEqual(app["metadata"]["namespace"], "argocd")
-            self.assertNotEqual(ROOT / app["spec"]["source"]["path"], source)
+            if "path" in app["spec"]["source"]:
+                self.assertNotEqual(ROOT / app["spec"]["source"]["path"], source)
+            else:
+                self.assertIn(app["spec"]["source"]["chart"], {"metallb", "traefik"})
         role_tasks = list(walk_tasks(load_yaml(ROLE / "tasks/main.yml")))
         self.assertTrue(any(task.get("ansible.builtin.include_tasks") == "wait.yml"
                             and task.get("vars", {}).get("_argocd_wait_name") ==

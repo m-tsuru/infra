@@ -1,0 +1,35 @@
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: lan-ingress
+spec:
+  addresses: [192.168.37.253/32]
+  autoAssign: false
+  serviceAllocation:
+    namespaces: [traefik]
+    serviceSelectors:
+      - matchLabels:
+          lan.sasakulab.com/vip: ingress
+          app.kubernetes.io/name: traefik
+          app.kubernetes.io/instance: traefik-traefik
+---
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: lan-dns
+spec:
+  addresses: [192.168.37.254/32]
+  autoAssign: false
+  serviceAllocation:
+    namespaces: [lan-dns]
+    serviceSelectors:
+      - matchLabels:
+          lan.sasakulab.com/vip: dns
+          app.kubernetes.io/name: lan-coredns
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: lan
+spec:
+  ipAddressPools: [lan-ingress, lan-dns]

@@ -5,6 +5,7 @@ Sasakulab のインフラ構成を Git で管理します。
 - [k3s / Argo CD のセットアップ](ansible/svc/k3s-setup/README.md)
 - [Zalando Postgres Operator の導入・DB 作成](ansible/svc/k3s-setup/gitops/infrastructure/postgres-operator/README.md)
 - [構築済み Flux クラスタから Argo CD への移行](ansible/svc/k3s-setup/gitops/MIGRATE-TO-ARGOCD.md)
+- [LAN DNS / MetalLB / HTTPS ingress](ansible/svc/k3s-setup/gitops/LAN-EXPOSURE.md)
 - [Argo CD / Sealed Secrets の運用](ansible/svc/k3s-setup/gitops/ARGOCD-OPERATIONS.md)
 
 既存クラスタの移行には `ansible/playbooks/k3s-argocd.yml` を使用します。

@@ -48,6 +48,11 @@ CHILD_WAVES = {
     "sealed-secrets.yaml": ("local-sealed-secrets", "-10"),
     "postgres-operator.yaml": ("local-postgres-operator", "-5"),
     "apps.yaml": ("local-apps", "0"),
+    "metallb.yaml": ("local-metallb", "-19"),
+    "metallb-config.yaml": ("local-metallb-config", "-18"),
+    "traefik.yaml": ("local-traefik", "-17"),
+    "lan-dns.yaml": ("local-lan-dns", "-16"),
+    "lan-routes.yaml": ("local-lan-routes", "5"),
 }
 
 
@@ -357,9 +362,13 @@ class PostgresApplicationTests(unittest.TestCase):
             self.assertEqual(child["metadata"]["name"], name)
             self.assertEqual(child["metadata"]["annotations"][SYNC_WAVE], wave)
             self.assertNotEqual(name, root["metadata"]["name"])
-            source = (ROOT / child["spec"]["source"]["path"]).resolve()
-            self.assertNotEqual(source, APPLICATIONS)
-            self.assertTrue((source / "kustomization.yaml").is_file())
+            if "chart" in child["spec"]["source"]:
+                self.assertIn(filename, {"metallb.yaml", "traefik.yaml"})
+                self.assertRegex(child["spec"]["source"]["targetRevision"], r"^\d+\.\d+\.\d+$")
+            else:
+                source = (ROOT / child["spec"]["source"]["path"]).resolve()
+                self.assertNotEqual(source, APPLICATIONS)
+                self.assertTrue((source / "kustomization.yaml").is_file())
 
 
 @unittest.skipUnless(shutil.which("kubectl"), "kubectl is not installed; local build checks skipped")
