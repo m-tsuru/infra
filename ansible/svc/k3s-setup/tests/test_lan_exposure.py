@@ -64,6 +64,11 @@ class LANTests(unittest.TestCase):
         self.assertFalse(pod.get('hostNetwork', False))
         self.assertTrue(pod['securityContext']['runAsNonRoot'])
         self.assertEqual(pod['containers'][0]['image'], 'coredns/coredns:1.14.7')
+        security = pod['containers'][0]['securityContext']
+        self.assertFalse(security['allowPrivilegeEscalation'])
+        self.assertTrue(security['readOnlyRootFilesystem'])
+        self.assertEqual(security['capabilities']['drop'], ['ALL'])
+        self.assertEqual(security['capabilities']['add'], ['NET_BIND_SERVICE'])
         config = next(d for d in docs if d['kind'] == 'ConfigMap')
         self.assertEqual(pod['volumes'][0]['configMap']['name'], config['metadata']['name'])
         core = config['data']['Corefile']
