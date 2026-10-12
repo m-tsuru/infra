@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-operator-ui
+  annotations:
+    argocd.argoproj.io/sync-wave: '10'
+spec:
+  template:
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: service
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          env:
+            - name: TARGET_NAMESPACE
+              value: databases
+            - name: OPERATOR_API_URL
+              value: http://postgres-operator.postgres-operator.svc.cluster.local:8080
+            # Enforces HTTP write denial, not just hiding buttons in the browser.
+            - name: READ_ONLY_MODE
+              value: 'true'
+            - name: TEAMS
+              value: '[]'
+            - name: SUPERUSER_TEAM
+              value: ''
+            - name: RESOURCES_VISIBLE
+              $patch: delete
+            - name: OPERATOR_UI_CONFIG
+              value: |-
+                {
+                  "docs_link": "https://postgres-operator.readthedocs.io/en/latest/",
+                  "databases_visible": true,
+                  "master_load_balancer_visible": false,
+                  "replica_load_balancer_visible": false,
+                  "nat_gateways_visible": false,
+                  "resources_visible": true,
+                  "users_visible": true,
+                  "postgresql_versions": ["18"]
+                }

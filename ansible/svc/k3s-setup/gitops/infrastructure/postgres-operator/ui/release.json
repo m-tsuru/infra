@@ -1,0 +1,20 @@
+{
+  "repository": "https://github.com/zalando/postgres-operator",
+  "tag": "v2.0.3",
+  "commit": "80b7a074ada5221dc5eeac487c19faf810eb9cfe",
+  "release_url": "https://github.com/zalando/postgres-operator/releases/tag/v2.0.3",
+  "files": [
+    {
+      "manifest": "vendor/deployment.yaml",
+      "immutable_source": "https://raw.githubusercontent.com/zalando/postgres-operator/80b7a074ada5221dc5eeac487c19faf810eb9cfe/ui/manifests/deployment.yaml",
+      "sha256": "1481cbcec277093b1cb2fcc043540ef5e58d615f9b558eca509a2f1a96d453e2",
+      "size_bytes": 3488
+    },
+    {
+      "manifest": "vendor/service.yaml",
+      "immutable_source": "https://raw.githubusercontent.com/zalando/postgres-operator/80b7a074ada5221dc5eeac487c19faf810eb9cfe/ui/manifests/service.yaml",
+      "sha256": "deef99ab877db6ff917197dbd1c71b9dc9fda3470cfc5a551670996651ee5e6f",
+      "size_bytes": 287
+    }
+  ]
+}

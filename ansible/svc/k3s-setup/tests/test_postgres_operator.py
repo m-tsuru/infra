@@ -195,7 +195,7 @@ class OperatorSourceTests(unittest.TestCase):
     def test_namespaces_stay_outside_the_namespaced_overlay(self):
         root = load_yaml(OPERATOR / "kustomization.yaml")
         self.assertEqual(set(root), {"apiVersion", "kind", "resources"})
-        self.assertEqual(root["resources"], ["namespaces.yaml", "operator"])
+        self.assertEqual(root["resources"], ["namespaces.yaml", "operator", "ui"])
         overlay = load_yaml(OPERATOR / "operator/kustomization.yaml")
         self.assertEqual(overlay["namespace"], "postgres-operator")
         self.assertEqual(overlay["resources"], ["../vendor"])
@@ -371,7 +371,7 @@ class OperatorRenderTests(unittest.TestCase):
         cls.configuration = cls.resources[("OperatorConfiguration", "postgresql-operator-default-configuration")]
         cls.deployment = cls.resources[("Deployment", "postgres-operator")]
 
-    def test_render_is_operator_only_with_exactly_two_crds(self):
+    def test_render_is_operator_and_ui_only_with_exactly_two_crds(self):
         expected = {
             ("Namespace", "postgres-operator"), ("Namespace", "databases"),
             ("CustomResourceDefinition", "postgresqls.acid.zalan.do"),
@@ -380,7 +380,11 @@ class OperatorRenderTests(unittest.TestCase):
             ("ClusterRole", "postgres-pod"), ("ClusterRoleBinding", "postgres-operator"),
             ("OperatorConfiguration", "postgresql-operator-default-configuration"),
             ("Deployment", "postgres-operator"), ("Service", "postgres-operator"),
+            ("ServiceAccount", "postgres-operator-ui"), ("Role", "postgres-operator-ui"),
+            ("RoleBinding", "postgres-operator-ui"), ("Deployment", "postgres-operator-ui"),
+            ("Service", "postgres-operator-ui"),
         }
+        self.assertEqual(len(expected), 16)
         self.assertEqual(set(self.resources), expected)
         self.assertEqual(len(self.rendered), len(expected))
         forbidden = {"postgresql", "postgresteam", "persistentvolumeclaim", "persistentvolume",
@@ -395,7 +399,10 @@ class OperatorRenderTests(unittest.TestCase):
                 if doc["kind"] in cluster_kinds:
                     self.assertNotIn("namespace", doc["metadata"])
                 else:
-                    self.assertEqual(doc["metadata"]["namespace"], "postgres-operator")
+                    namespace = ("databases" if doc["kind"] in {"Role", "RoleBinding"}
+                                 and doc["metadata"]["name"] == "postgres-operator-ui"
+                                 else "postgres-operator")
+                    self.assertEqual(doc["metadata"]["namespace"], namespace)
         binding = self.resources[("ClusterRoleBinding", "postgres-operator")]
         self.assertEqual(binding["subjects"], [
             {"kind": "ServiceAccount", "name": "postgres-operator", "namespace": "postgres-operator"},
@@ -411,6 +418,9 @@ class OperatorRenderTests(unittest.TestCase):
             if doc["kind"] in {"Namespace", "CustomResourceDefinition"}:
                 self.assertEqual(annotations[SYNC_WAVE], "-20")
                 self.assertEqual(set(annotations[SYNC_OPTIONS].split(",")), {"Prune=false", "Delete=false"})
+            elif doc["metadata"]["name"] == "postgres-operator-ui":
+                self.assertEqual(annotations[SYNC_WAVE],
+                                 "10" if doc["kind"] == "Deployment" else "5")
             elif doc["kind"] in {"ServiceAccount", "ClusterRole", "ClusterRoleBinding", "Service"}:
                 self.assertEqual(annotations[SYNC_WAVE], "-10")
         config_wave = int(self.configuration["metadata"]["annotations"][SYNC_WAVE])

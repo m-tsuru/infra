@@ -23,7 +23,7 @@ Ansible で 3 台の k3s server を構築し、Argo CD に Kubernetes リソー�
 etcd の quorum は 2 台です。同時に 2 台を停止しないでください。
 
 - **Ansible**: ホスト名、`/etc/hosts`、swap、カーネル設定、k3s バイナリ・設定・systemd、Argo CD 初回導入と root Application の初期設定。
-- **Argo CD**: Argo CD 自身、Sealed Secrets、`gitops/apps` と子 Application の継続的な同期。
+- **Argo CD**: Argo CD 自身、Sealed Secrets、Zalando Postgres Operator、`gitops/apps` と子 Application の継続的な同期。
   移行時の誤削除防止のため自動 prune は無効です。削除の自動化は運用確認後に対象ごとに有効化します。
 - **k3s 標準コンポーネント**: CoreDNS、metrics-server、local-path provisioner は k3s が管理します。
   これらのバージョンは Git 上の k3s バージョンに連動し、Argo CD と二重管理しません。
@@ -35,7 +35,8 @@ etcd の quorum は 2 台です。同時に 2 台を停止しないでくださ�
 Kubernetes の追加リソースは Argo CD が自動適用します。PV の実データ、etcd snapshot、復号鍵などの
 バックアップは GitOps だけでは保護できません。
 
-固定バージョンは k3s **`v1.37.1+k3s1`**、Argo CD **`v3.5.4`**、Sealed Secrets **`v0.40.0`** です。
+固定バージョンは k3s **`v1.37.1+k3s1`**、Argo CD **`v3.5.4`**、Sealed Secrets **`v0.40.0`**、
+Zalando Postgres Operator **`v2.0.3`** です。
 k3s は公式 checksum ファイルで検証して取得します。Argo CD / Sealed Secrets の公式マニフェストは
 SHA256 検証済みのものを vendor 化しています。旧 Flux **`v2.9.6`** は移行完了まで残します。
 Argo CD は通常の非 HA インストールです。k3s の etcd HA とは別に容量・可用性を確認してください。
@@ -62,6 +63,7 @@ ansible/
         │   ├── argocd/                    # Argo install / Applications
         │   ├── clusters/local/flux-system/ # 旧 Flux（稼働中は削除しない）
         │   ├── infrastructure/sealed-secrets/
+        │   ├── infrastructure/postgres-operator/ # Operator のみ、DB 作成は opt-in
         │   └── apps/
         ├── tests/
         └── artifacts/                     # 実行時生成、Git 管理外
@@ -202,6 +204,8 @@ kubectl -n kube-system rollout status deployment/sealed-secrets-controller
 ## 運用
 
 - Kubernetes リソースは `gitops/apps` とその `kustomization.yaml` に追加して push します。
+- PostgreSQL は [Zalando Postgres Operator の手順](gitops/infrastructure/postgres-operator/README.md) を参照してください。
+  Operator は自動同期しますが、DB / PVC はストレージ・バックアップを決めて明示的に追加するまで作成しません。
 - UI 接続、Secret の暗号化、GitOps の構成、バージョン更新は [gitops/ARGOCD-OPERATIONS.md](gitops/ARGOCD-OPERATIONS.md) を参照してください。
 - 全 Application は自動 sync / self-heal が有効ですが、`prune: false`。Git から削除したリソースは自動削除されません。
   移行・運用確認後に対象ごとに prune を有効化できます。Namespace / PVC のデータ損失には注意してください。

@@ -4,3 +4,4 @@ resources:
   # Keep both namespaces outside the namespaced Operator overlay.
   - namespaces.yaml
   - operator
+  - ui
